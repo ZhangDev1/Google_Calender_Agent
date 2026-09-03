@@ -1,21 +1,24 @@
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.oauth2.service_account import Credentials
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 from pathlib import Path
 
-from httpcore import Request
 
-
-def get_calendar_service():
+def get_calendar_service(token_path="token.json"):
     """
     Authenticate and return the Google Calendar service object.
+
+    Args:
+        token_path (str or Path): Path to the cached token file. Defaults to
+            "token.json"; tests can override this to isolate their own file.
 
     Returns:
         googleapiclient.discovery.Resource: The Google Calendar service object.
     """
 
-    token_path = Path("token.json")
+    token_path = Path(token_path)
     creds = None
 
     # Checks if the path exists AND is a file (returns True/False)
@@ -26,30 +29,24 @@ def get_calendar_service():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            print("Token is expired. Attempting refresh...")
             try:
-                # This automatically handles the token refresh flow
                 creds.refresh(Request())
-                
-                # Save the updated token back to your file
-                with open('token.json', 'w') as token_file:
-                    token_file.write(creds.to_json())
                 print("Token refreshed successfully!")
-
             except Exception as e:
                 print(f"Failed to refresh token: {e}")
-                print("Re-authentication is required.")
+                creds = None  # fall through to full re-auth below
 
-        else:
-            # Credentials are either not present or cannot be refreshed, so we need to re-authenticate
+        if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(
                 "client_secret_47034214311-jvaau3v3idk6no14mjlv6o83vq9k8a7h.apps.googleusercontent.com.json",
                 scopes=["https://www.googleapis.com/auth/calendar.events"]
             )
-        
             flow.run_local_server(port=0)
-            print("Re-authentication successful. Saving new token...")
-    
+            creds = flow.credentials
+
+        with open(token_path, 'w') as token_file:
+            token_file.write(creds.to_json())
+
     service = build('calendar', 'v3', credentials=creds)
     
     return service
