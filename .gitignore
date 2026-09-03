@@ -1,0 +1,14 @@
+# Secrets / credentials
+client_secret*.json
+token.json
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / React Native
+node_modules/
+.expo/
