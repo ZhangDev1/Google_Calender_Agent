@@ -1,10 +1,11 @@
+from google import genai
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
 from pathlib import Path
-
+from dotenv import load_dotenv
 
 def get_calendar_service(token_path="token.json"):
     """
@@ -38,7 +39,7 @@ def get_calendar_service(token_path="token.json"):
 
         if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(
-                "client_secret_47034214311-jvaau3v3idk6no14mjlv6o83vq9k8a7h.apps.googleusercontent.com.json",
+                "backend/client_secret_47034214311-jvaau3v3idk6no14mjlv6o83vq9k8a7h.apps.googleusercontent.com.json",
                 scopes=["https://www.googleapis.com/auth/calendar.events"]
             )
             flow.run_local_server(port=0)
@@ -75,3 +76,55 @@ def create_event(service, summary, start_datetime, end_datetime, timezone="Ameri
     created_event = service.events().insert(calendarId='primary', body=event).execute()
     
     return created_event
+
+
+def main():
+    load_dotenv()  # Load environment variables from .env file
+    client = genai.Client()
+
+    service = get_calendar_service()
+
+    def create_event_tool(summary: str, start_datetime: str, end_datetime: str, timezone: str = "America/Los_Angeles") -> dict:
+        """
+        Create an event on the user's Google Calendar.
+
+        Args:
+            summary: The title of the event.
+            start_datetime: Start time in ISO 8601 format, e.g. "2026-07-28T15:00:00".
+            end_datetime: End time in ISO 8601 format, e.g. "2026-07-28T15:30:00".
+            timezone: IANA timezone name, e.g. "America/Los_Angeles".
+        """
+        return create_event(service, summary, start_datetime, end_datetime, timezone)
+
+    tool_functions = [create_event_tool]
+    tools_by_name = {fn.__name__: fn for fn in tool_functions}
+
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents="Schedule a test event tomorrow at 3pm for 30 minutes",
+        config=genai.types.GenerateContentConfig(
+            tools=tool_functions,
+            automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
+        ),
+    )
+
+
+    for part in response.candidates[0].content.parts:
+        if not part.function_call:
+            continue
+
+        call = part.function_call
+        if call.name not in tools_by_name:
+            print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
+            continue
+
+        result = tools_by_name[call.name](**call.args)
+        print(f"Executed {call.name} -> {result}")
+
+
+    print(response.candidates[0].content.parts)
+    print(response.text)
+
+
+if __name__ == "__main__":
+    main()
