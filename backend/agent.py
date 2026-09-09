@@ -7,6 +7,11 @@ from google.auth.transport.requests import Request
 from pathlib import Path
 from dotenv import load_dotenv
 
+from datetime import datetime, timedelta
+from tzlocal import get_localzone_name
+
+MAX_RANGE_DAYS = 31
+
 def get_calendar_service(token_path="token.json"):
     """
     Authenticate and return the Google Calendar service object.
@@ -53,6 +58,53 @@ def get_calendar_service(token_path="token.json"):
     return service
 
 
+def list_events(service, time_min, time_max, max_results=10):
+    """
+    List events on the user's Google Calendar within a time range.
+
+    Args:
+        service: Authenticated Google Calendar service object.
+        time_min (str): Start of the range, RFC3339 with UTC offset. Choose a
+            range appropriate to the request — e.g. the full day for checking
+            conflicts around a specific event, or the relevant period (week,
+            month) for an open-ended query.
+        time_max (str): End of the range, RFC3339 with UTC offset.
+        max_results (int): Maximum number of results to return.
+
+    Returns:
+        list[dict]: Matching events, each with 'summary', 'start', 'end'.
+    """
+
+
+    parsed_min = datetime.fromisoformat(time_min)
+    parsed_max = datetime.fromisoformat(time_max)
+
+    if parsed_max - parsed_min > timedelta(days=MAX_RANGE_DAYS):
+        clamped_max = parsed_min + timedelta(days=MAX_RANGE_DAYS)
+        print(f"Requested range ({time_min} to {time_max}) exceeds {MAX_RANGE_DAYS} days - clamping end to {clamped_max.isoformat()}.")
+        time_max = clamped_max.isoformat()
+
+    
+    events_result = service.events().list(
+        calendarId='primary', 
+        timeMin=time_min, 
+        timeMax=time_max,
+        maxResults=max_results,
+        singleEvents=True, 
+        orderBy='startTime').execute()
+
+    events = events_result.get('items', [])
+
+    return [
+        {
+            "summary": event.get("summary", "(no title)"),
+            "start": event["start"].get("dateTime", event["start"].get("date")),
+            "end": event["end"].get("dateTime", event["end"].get("date")),
+        }
+        for event in events
+    ]
+
+
 def create_event(service, summary, start_datetime, end_datetime, timezone="America/Los_Angeles"):
     """
     Create a calendar event using Google Calendar API.
@@ -84,6 +136,24 @@ def main():
 
     service = get_calendar_service()
 
+
+    def list_events_tool(start_datetime: str, end_datetime: str, max_results: int = 10) -> list:
+        """
+        List events on the user's Google Calendar within a time range.
+
+        Args:
+            start_datetime: Start of the range, RFC3339 with UTC offset,
+                e.g. "2026-07-28T00:00:00-07:00". Choose a range appropriate
+                to the request — the full day for checking conflicts around
+                a specific event, or the relevant period for an open-ended query.
+            end_datetime: End of the range, RFC3339 with UTC offset.
+            max_results: The maximum number of events to return.
+        """
+        return list_events(service, start_datetime, end_datetime, max_results)
+
+
+
+
     def create_event_tool(summary: str, start_datetime: str, end_datetime: str, timezone: str = "America/Los_Angeles") -> dict:
         """
         Create an event on the user's Google Calendar.
@@ -96,14 +166,29 @@ def main():
         """
         return create_event(service, summary, start_datetime, end_datetime, timezone)
 
-    tool_functions = [create_event_tool]
+    tool_functions = [create_event_tool, list_events_tool]
     tools_by_name = {fn.__name__: fn for fn in tool_functions}
+
+    # Get the current date and time
+    today_str = datetime.now().astimezone().isoformat()
+
+    # Get the local timezone name
+    local_tz = get_localzone_name()  # e.g. "America/New_York"
+
+    # System instruction for the model, including the current date/time and user's timezone
+    system_instruction = (
+        f"The current date and time is {today_str}. The user's timezone is {local_tz}. "
+        "You are a calendar assistant. Only use your tools to manage the user's Google "
+        "Calendar. If the user asks something unrelated to their calendar, politely "
+        "decline and explain that you can only help with calendar-related requests."
+    )
 
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents="Schedule a test event tomorrow at 3pm for 30 minutes",
-        config=genai.types.GenerateContentConfig(
+        config = genai.types.GenerateContentConfig(
             tools=tool_functions,
+            system_instruction=system_instruction,
             automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
@@ -123,7 +208,10 @@ def main():
 
 
     print(response.candidates[0].content.parts)
-    print(response.text)
+
+    if response.text:
+        print(response.text)
+
 
 
 if __name__ == "__main__":
