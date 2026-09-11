@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from tzlocal import get_localzone_name
 
+
+IRREVERSIBLE_TOOLS = {"create_event_tool"}
+
 MAX_RANGE_DAYS = 31
 
 def get_calendar_service(token_path="token.json"):
@@ -56,6 +59,67 @@ def get_calendar_service(token_path="token.json"):
     service = build('calendar', 'v3', credentials=creds)
     
     return service
+
+
+def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
+    max_turns = 20
+
+    # Set a max number of turns to prevent infinite loops that drive up token usage
+    for _ in range(max_turns):
+        response = client.models.generate_content(
+            model=model,
+            contents=history,
+            config=genai.types.GenerateContentConfig(
+                tools=tool_functions,
+                system_instruction=system_instruction,
+                automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
+            ),
+        )
+
+        model_content = response.candidates[0].content
+        history.append(model_content)
+
+        function_calls = [part.function_call for part in model_content.parts if part.function_call]
+        if not function_calls:
+            return response.text  # no more tool calls — this is the final answer
+
+        response_parts = []
+        for call in function_calls:
+            if call.name not in tools_by_name:
+                # Function call requested by the model is not in our list of tools - refuse to execute it
+                print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
+                result = {"error": f"Tool '{call.name}' does not exist."}
+            elif call.name in IRREVERSIBLE_TOOLS:
+                # Function call is irreversible - ask the user to confirm before executing it
+                print(f"About to run {call.name} with {call.args}")
+                if input("Proceed? [y/N] ").strip().lower() != "y":
+                    result = {"error": "User declined to confirm this action."}
+                else:
+                    result = tools_by_name[call.name](**call.args)
+                    print(f"Executed {call.name} -> {result}")
+            else:
+                # Function call is safe to execute - run it
+                result = tools_by_name[call.name](**call.args)
+                print(f"Executed {call.name} -> {result}")
+            response_parts.append(genai.types.Part.from_function_response(name=call.name, response={"result": result}))
+
+        history.append(genai.types.Content(role="user", parts=response_parts))
+
+    return "Sorry, I couldn't complete this after multiple attempts."
+
+
+def run_agent(client, system_instruction, tool_functions, tools_by_name, user_message, model="gemini-3.6-flash"):
+    history = [genai.types.Content(role="user", parts=[genai.types.Part(text=user_message)])]
+
+    while True:
+        reply = run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
+        print(f"Agent: {reply}")
+
+        # This is temporary for testing so the user can have turns with the agent
+        user_input = input("You: ")
+        if user_input.strip().lower() in ("quit", "exit"):
+            break
+        history.append(genai.types.Content(role="user", parts=[genai.types.Part(text=user_input)]))
 
 
 def list_events(service, time_min, time_max, max_results=10):
@@ -180,37 +244,17 @@ def main():
         f"The current date and time is {today_str}. The user's timezone is {local_tz}. "
         "You are a calendar assistant. Only use your tools to manage the user's Google "
         "Calendar. If the user asks something unrelated to their calendar, politely "
-        "decline and explain that you can only help with calendar-related requests."
-    )
-
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents="Schedule a test event tomorrow at 3pm for 30 minutes",
-        config = genai.types.GenerateContentConfig(
-            tools=tool_functions,
-            system_instruction=system_instruction,
-            automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
-        ),
+        "decline and explain that you can only help with calendar-related requests. "
+        "Before creating any new event, always first check the user's calendar for "
+        "conflicts in that time window using list_events. If there is  a conflict, "
+        "inform the user and ask whether to proceed or choose another time; only "
+        "create the event after they confirm."
     )
 
 
-    for part in response.candidates[0].content.parts:
-        if not part.function_call:
-            continue
+    run_agent(client, system_instruction, tool_functions, tools_by_name,
+                              "Schedule a test event tomorrow at 3pm for 30 minutes")
 
-        call = part.function_call
-        if call.name not in tools_by_name:
-            print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
-            continue
-
-        result = tools_by_name[call.name](**call.args)
-        print(f"Executed {call.name} -> {result}")
-
-
-    print(response.candidates[0].content.parts)
-
-    if response.text:
-        print(response.text)
 
 
 

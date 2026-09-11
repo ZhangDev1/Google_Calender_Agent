@@ -52,13 +52,16 @@ the next layer of complexity.
       be the wrong fit (see Roadblocks below) — replaced with a manual
       loop: inspect `response.candidates[0].content.parts` for
       `function_call`s, validate, dispatch by hand.
-    - **Memory** — [ ] not started. Short-term (conversation state within a
-      session) and long-term (a small DB the agent reads/writes as a tool,
-      for facts like "lunch defaults to 12pm") both still to do.
-    - **Guardrails** — [x] unsupported-tool rejection, [x] date-range clamp.
-      [ ] Confirmation gate before irreversible actions (create/delete) and
-      [ ] scope limits (reject non-calendar requests) still to do. See
-      "Guardrails" section below for what each existing one actually does.
+    - **Memory** — [x] short-term (session-scoped `history` list, verified
+      working across real multi-turn REPL exchanges — the model correctly
+      remembered an event it had just created in an earlier turn of the
+      same session). [ ] Long-term still to do: a small DB the agent
+      reads/writes as a tool, for facts like "lunch defaults to 12pm" that
+      need to survive across separate runs/sessions, not just within one.
+    - **Guardrails** — [x] unsupported-tool rejection, [x] date-range clamp,
+      [x] scope limits, [x] confirmation gate before irreversible actions.
+      All four built and verified. See "Guardrails" section below for what
+      each one actually does.
 - [ ] **Phase 2 — Bare-bones RN app.** A screen with a text box hitting the
       Phase 1 backend. Establishes React Native project setup, API calls,
       and mobile OAuth/token handoff before audio enters the picture.
@@ -143,6 +146,43 @@ the next layer of complexity.
   appropriate range." This is what motivated the hard range-clamp
   guardrail rather than relying on prompting alone: instructions shape
   behavior, they don't guarantee it.
+- What looked like working multi-step reasoning early on (the model
+  checking `list_events` and then not creating a duplicate) turned out to
+  be incomplete — the script executed one tool call and exited without
+  ever feeding the result back to the model, so it never actually
+  "decided" anything. Real check-then-act reasoning needed a genuine loop:
+  a growing `history` list of `Content` turns, sent back to the model
+  after every tool execution, continuing until it produces a text-only
+  response. This is what `run_turn`/`run_agent` actually implement, and
+  it's also what session-scoped short-term memory turned out to *be* —
+  not a separate feature, but a direct consequence of building the loop
+  correctly.
+- After adding a system_instruction telling the model to ask before
+  creating a conflicting event, one successful test made conversational
+  confirmation look sufficient. It isn't, reliably: nothing stops the
+  model from bundling a confirmation question and the actual tool call
+  into the same response, and prompted behavior was already proven
+  unreliable once before (the date-range case above). Fixed by adding a
+  hard, unconditional confirmation gate in the dispatch code itself
+  (`IRREVERSIBLE_TOOLS`) — verified by declining at the hard gate right
+  after conversationally agreeing via the model, confirming the two are
+  genuinely independent checkpoints, not redundant ones.
+- Development/testing burned through the Gemini free tier's daily quota
+  (20 `generate_content` requests/day for `gemini-3.6-flash`) more than
+  once. It's a per-day cap, not a short cooldown — the fix is waiting for
+  the daily reset or switching to a different model (separate quota
+  bucket) for continued testing, not retrying quickly.
+- A refactor left `run_agent` no longer returning a value (it became an
+  open-ended REPL), but `main()` still printed its old return value,
+  silently printing `None` after every session. Cleanup: stop capturing/
+  printing a return value that no longer exists.
+- A multi-line `system_instruction` built as a single triple-quoted
+  f-string, with leftover literal `"` characters from an earlier
+  parenthesized-adjacent-literals version, compiled without error but
+  produced a string full of stray quotes and raw newlines baked into the
+  actual text sent to the model. Triple-quoted strings don't
+  auto-concatenate the way adjacent string literals in parentheses do —
+  fixed by returning to the parenthesized-adjacent-literals form.
 
 ## Guardrails
 
@@ -157,7 +197,17 @@ What each currently-implemented guardrail actually protects against:
    model asks for. Purpose: docstring instructions shape model behavior but
    don't guarantee it — this enforces a hard limit so an oversized,
    expensive query can't happen no matter what the model decides.
-
-Still to build: a confirmation gate before irreversible actions
-(create/delete), and scope limits that reject non-calendar requests
-outright.
+3. **Scope limits** (`system_instruction`). Tells the model it's a
+   calendar assistant only and should decline unrelated requests. Purpose:
+   keep the conversation on-topic. Lower-stakes than the other guardrails
+   since the model has no tools to misuse for anything non-calendar
+   anyway — this is about UX, not safety.
+4. **Confirmation gate** (`run_turn`, `IRREVERSIBLE_TOOLS`). Before
+   executing any tool in `IRREVERSIBLE_TOOLS` (currently
+   `create_event_tool`), pauses for an explicit human `y`/`N` regardless of
+   what the model's accompanying text says. Purpose: the model asking the
+   user "should I proceed?" conversationally is not a guarantee it won't
+   *also* call the tool in the same breath — this is a structural
+   checkpoint the model cannot talk its way past. Verified by
+   conversationally agreeing to double-book, then declining at this gate
+   anyway, and confirming no event was created.
