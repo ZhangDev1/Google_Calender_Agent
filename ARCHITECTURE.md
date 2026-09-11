@@ -55,9 +55,22 @@ the next layer of complexity.
     - **Memory** — [x] short-term (session-scoped `history` list, verified
       working across real multi-turn REPL exchanges — the model correctly
       remembered an event it had just created in an earlier turn of the
-      same session). [ ] Long-term still to do: a small DB the agent
-      reads/writes as a tool, for facts like "lunch defaults to 12pm" that
-      need to survive across separate runs/sessions, not just within one.
+      same session). [x] Long-term: `memory.json` (flat key/value facts),
+      read on session start and injected into `system_instruction` so the
+      model always has known preferences in context without needing to
+      ask for them; written via a `remember_fact(key, value)` tool the
+      model calls when the user states a preference worth persisting.
+      Verified end-to-end: asked the model to remember a lunch-duration
+      preference, it chose a sensible key/value pair on its own
+      (`lunch_duration: "30 minutes"`), and it persisted to disk correctly.
+      Known limitation, deliberately not solved yet: this always injects
+      the *entire* memory file into every session — fine at the current
+      scale (a handful of facts), but doesn't scale to a large, long-lived
+      memory store. At that point the fix is on-demand retrieval (a
+      `recall_facts(query)` tool backed by a real queryable DB, likely
+      with embedding-based relevance filtering) instead of always-inject
+      — the same "don't solve it before you need it" call already made
+      for `token.json` and the flat `history` list.
     - **Guardrails** — [x] unsupported-tool rejection, [x] date-range clamp,
       [x] scope limits, [x] confirmation gate before irreversible actions.
       All four built and verified. See "Guardrails" section below for what

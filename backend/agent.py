@@ -10,10 +10,14 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from tzlocal import get_localzone_name
 
+import json
+
 
 IRREVERSIBLE_TOOLS = {"create_event_tool"}
 
 MAX_RANGE_DAYS = 31
+
+MEMORY_PATH = "memory.json"
 
 def get_calendar_service(token_path="token.json"):
     """
@@ -61,65 +65,37 @@ def get_calendar_service(token_path="token.json"):
     return service
 
 
-def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
-    max_turns = 20
+def load_memory(memory_path=MEMORY_PATH):
+    """
+    Load the agent's memory from a JSON file.
 
-    # Set a max number of turns to prevent infinite loops that drive up token usage
-    for _ in range(max_turns):
-        response = client.models.generate_content(
-            model=model,
-            contents=history,
-            config=genai.types.GenerateContentConfig(
-                tools=tool_functions,
-                system_instruction=system_instruction,
-                automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
-            ),
-        )
+    Args:
+        memory_path (str or Path): Path to the memory JSON file. Defaults to
+            "memory.json"; tests can override this to isolate their own file.
 
-        model_content = response.candidates[0].content
-        history.append(model_content)
-
-        function_calls = [part.function_call for part in model_content.parts if part.function_call]
-        if not function_calls:
-            return response.text  # no more tool calls — this is the final answer
-
-        response_parts = []
-        for call in function_calls:
-            if call.name not in tools_by_name:
-                # Function call requested by the model is not in our list of tools - refuse to execute it
-                print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
-                result = {"error": f"Tool '{call.name}' does not exist."}
-            elif call.name in IRREVERSIBLE_TOOLS:
-                # Function call is irreversible - ask the user to confirm before executing it
-                print(f"About to run {call.name} with {call.args}")
-                if input("Proceed? [y/N] ").strip().lower() != "y":
-                    result = {"error": "User declined to confirm this action."}
-                else:
-                    result = tools_by_name[call.name](**call.args)
-                    print(f"Executed {call.name} -> {result}")
-            else:
-                # Function call is safe to execute - run it
-                result = tools_by_name[call.name](**call.args)
-                print(f"Executed {call.name} -> {result}")
-            response_parts.append(genai.types.Part.from_function_response(name=call.name, response={"result": result}))
-
-        history.append(genai.types.Content(role="user", parts=response_parts))
-
-    return "Sorry, I couldn't complete this after multiple attempts."
+    Returns:
+        dict: The loaded memory data.
+    """
+    memory_path = Path(memory_path)
+    if memory_path.is_file():
+        with open(memory_path, 'r') as f:
+            return json.load(f)
+    else:
+        return {}
 
 
-def run_agent(client, system_instruction, tool_functions, tools_by_name, user_message, model="gemini-3.6-flash"):
-    history = [genai.types.Content(role="user", parts=[genai.types.Part(text=user_message)])]
+def save_memory(memory, memory_path=MEMORY_PATH):
+    """
+    Save the agent's memory to a JSON file.
 
-    while True:
-        reply = run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
-        print(f"Agent: {reply}")
-
-        # This is temporary for testing so the user can have turns with the agent
-        user_input = input("You: ")
-        if user_input.strip().lower() in ("quit", "exit"):
-            break
-        history.append(genai.types.Content(role="user", parts=[genai.types.Part(text=user_input)]))
+    Args:
+        memory (dict): The memory data to save.
+        memory_path (str or Path): Path to the memory JSON file. Defaults to
+            "memory.json"; tests can override this to isolate their own file.
+    """
+    memory_path = Path(memory_path)
+    with open(memory_path, 'w') as f:
+        json.dump(memory, f, indent=4)
 
 
 def list_events(service, time_min, time_max, max_results=10):
@@ -194,6 +170,68 @@ def create_event(service, summary, start_datetime, end_datetime, timezone="Ameri
     return created_event
 
 
+
+def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
+    max_turns = 20
+
+    # Set a max number of turns to prevent infinite loops that drive up token usage
+    for _ in range(max_turns):
+        response = client.models.generate_content(
+            model=model,
+            contents=history,
+            config=genai.types.GenerateContentConfig(
+                tools=tool_functions,
+                system_instruction=system_instruction,
+                automatic_function_calling=genai.types.AutomaticFunctionCallingConfig(disable=True),
+            ),
+        )
+
+        model_content = response.candidates[0].content
+        history.append(model_content)
+
+        function_calls = [part.function_call for part in model_content.parts if part.function_call]
+        if not function_calls:
+            return response.text  # no more tool calls — this is the final answer
+
+        response_parts = []
+        for call in function_calls:
+            if call.name not in tools_by_name:
+                # Function call requested by the model is not in our list of tools - refuse to execute it
+                print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
+                result = {"error": f"Tool '{call.name}' does not exist."}
+            elif call.name in IRREVERSIBLE_TOOLS:
+                # Function call is irreversible - ask the user to confirm before executing it
+                print(f"About to run {call.name} with {call.args}")
+                if input("Proceed? [y/N] ").strip().lower() != "y":
+                    result = {"error": "User declined to confirm this action."}
+                else:
+                    result = tools_by_name[call.name](**call.args)
+                    print(f"Executed {call.name} -> {result}")
+            else:
+                # Function call is safe to execute - run it
+                result = tools_by_name[call.name](**call.args)
+                print(f"Executed {call.name} -> {result}")
+            response_parts.append(genai.types.Part.from_function_response(name=call.name, response={"result": result}))
+
+        history.append(genai.types.Content(role="user", parts=response_parts))
+
+    return "Sorry, I couldn't complete this after multiple attempts."
+
+
+def run_agent(client, system_instruction, tool_functions, tools_by_name, user_message, model="gemini-3.6-flash"):
+    history = [genai.types.Content(role="user", parts=[genai.types.Part(text=user_message)])]
+
+    while True:
+        reply = run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
+        print(f"Agent: {reply}")
+
+        # This is temporary for testing so the user can have turns with the agent
+        user_input = input("You: ")
+        if user_input.strip().lower() in ("quit", "exit"):
+            break
+        history.append(genai.types.Content(role="user", parts=[genai.types.Part(text=user_input)]))
+
+
 def main():
     load_dotenv()  # Load environment variables from .env file
     client = genai.Client()
@@ -230,7 +268,24 @@ def main():
         """
         return create_event(service, summary, start_datetime, end_datetime, timezone)
 
-    tool_functions = [create_event_tool, list_events_tool]
+
+    def remember_fact(key: str, fact: str) -> str:
+        """
+        Store or update a fact about the user's preferences in long-term memory.
+        If this fact matches something already known (check the current known
+        facts provided in your instructions), reuse that same key to update it
+        rather than creating a new one.
+
+        Args:
+            key: A short, consistent identifier for this fact, e.g. "lunch_default_time".
+            fact: The fact's value, e.g. "12:00".
+        """
+        memory = load_memory()
+        memory[key] = fact
+        save_memory(memory)
+        return f"Fact remembered: {key} = {fact}"
+
+    tool_functions = [create_event_tool, list_events_tool, remember_fact]
     tools_by_name = {fn.__name__: fn for fn in tool_functions}
 
     # Get the current date and time
@@ -238,6 +293,10 @@ def main():
 
     # Get the local timezone name
     local_tz = get_localzone_name()  # e.g. "America/New_York"
+
+    # Load previously remembered facts from memory
+    memory = load_memory()
+    memory_str = "\n".join(f"- {k}: {v}" for k, v in memory.items()) or "No stored preferences yet."
 
     # System instruction for the model, including the current date/time and user's timezone
     system_instruction = (
@@ -248,7 +307,9 @@ def main():
         "Before creating any new event, always first check the user's calendar for "
         "conflicts in that time window using list_events. If there is  a conflict, "
         "inform the user and ask whether to proceed or choose another time; only "
-        "create the event after they confirm."
+        "create the event after they confirm. "
+        f"Known user preferences from past sessions:\n{memory_str}\n"
+        "Take these into account when interpreting requests."
     )
 
 
