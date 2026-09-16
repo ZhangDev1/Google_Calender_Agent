@@ -38,16 +38,20 @@ the next layer of complexity.
 - [x] **Phase 0 — Plumbing.** GCP project, OAuth consent screen, a FastAPI
       endpoint that creates a hardcoded event on a real calendar via the
       Calendar API. Proves auth + API access before any agent logic exists.
-- [ ] **Phase 1 — Text-in agent.** The core of the project. Built and tested
+- [x] **Phase 1 — Text-in agent.** The core of the project. Built and tested
       entirely with text input, decoupled from voice — voice is just an I/O
       modality bolted on in Phase 3/4, the agent itself doesn't know the
       difference. Hand-rolled (not a framework like LangGraph/ADK) so the
       concepts are actually learned rather than abstracted away. Components:
     - **Toolbelt** — [x] `create_event`, [x] `list_events`,
-      [ ] `check_availability`, [ ] `update_event`, [ ] `delete_event`.
-      Not just one function; the agent should chain calls (confirmed
-      working: it now checks `list_events` for conflicts before deciding
-      whether to call `create_event`).
+      [x] `update_event`, [x] `delete_event`. `check_availability` was
+      dropped from the plan rather than built — `list_events` already
+      covers exactly that need (proven repeatedly in testing), so a
+      separate tool would've just been a redundant way to ask the same
+      question. Not just one function; the agent chains calls (confirmed
+      working: it checks `list_events` for conflicts before deciding
+      whether to call `create_event`). `update_event`/`delete_event` both
+      sit behind the confirmation gate, same as `create_event`.
     - **Agent loop** — [x] built. Automatic function calling turned out to
       be the wrong fit (see Roadblocks below) — replaced with a manual
       loop: inspect `response.candidates[0].content.parts` for

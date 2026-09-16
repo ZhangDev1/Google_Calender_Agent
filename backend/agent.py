@@ -13,7 +13,8 @@ from tzlocal import get_localzone_name
 import json
 
 
-IRREVERSIBLE_TOOLS = {"create_event_tool"}
+# Confirmation gate tools that are irreversible (create, update, delete) to prevent accidental changes
+IRREVERSIBLE_TOOLS = {"create_event_tool", "update_event_tool", "delete_event_tool"}
 
 MAX_RANGE_DAYS = 31
 
@@ -112,9 +113,8 @@ def list_events(service, time_min, time_max, max_results=10):
         max_results (int): Maximum number of results to return.
 
     Returns:
-        list[dict]: Matching events, each with 'summary', 'start', 'end'.
+        list[dict]: Matching events, each with 'id', 'summary', 'start', 'end'.
     """
-
 
     parsed_min = datetime.fromisoformat(time_min)
     parsed_max = datetime.fromisoformat(time_max)
@@ -137,6 +137,7 @@ def list_events(service, time_min, time_max, max_results=10):
 
     return [
         {
+            "id": event["id"],
             "summary": event.get("summary", "(no title)"),
             "start": event["start"].get("dateTime", event["start"].get("date")),
             "end": event["end"].get("dateTime", event["end"].get("date")),
@@ -166,9 +167,57 @@ def create_event(service, summary, start_datetime, end_datetime, timezone="Ameri
     }
 
     created_event = service.events().insert(calendarId='primary', body=event).execute()
-    
+
     return created_event
 
+
+def update_event(service, event_id, summary=None, start_datetime=None, end_datetime=None, timezone=None):
+    """
+    Update an existing calendar event. Only fields that are provided (not
+    None) should actually change; leave everything else untouched.
+
+    Args:
+        service: Authenticated Google Calendar service object.
+        event_id (str): The ID of the event to update (from list_events).
+        summary (str, optional): New title for the event.
+        start_datetime (str, optional): New start time, RFC3339 with UTC offset.
+        end_datetime (str, optional): New end time, RFC3339 with UTC offset.
+        timezone (str, optional): New IANA timezone name.
+
+    Returns:
+        dict: The updated event object.
+    """
+
+    body = {}
+    if summary is not None:
+        body["summary"] = summary
+    if start_datetime is not None:
+        body["start"] = {"dateTime": start_datetime}
+    if timezone is not None:
+        body.setdefault("start", {})["timeZone"] = timezone
+    if end_datetime is not None:
+        body["end"] = {"dateTime": end_datetime}
+    if timezone is not None:
+        body.setdefault("end", {})["timeZone"] = timezone
+
+    return service.events().patch(calendarId='primary', eventId=event_id, body=body).execute()
+
+
+def delete_event(service, event_id):
+    """
+    Delete an event from the user's Google Calendar.
+
+    Args:
+        service: Authenticated Google Calendar service object.
+        event_id (str): The ID of the event to delete (from list_events).
+
+    Returns:
+        None
+    """
+
+    service.events().delete(calendarId='primary', eventId=event_id).execute()
+
+    return
 
 
 def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
@@ -269,6 +318,34 @@ def main():
         return create_event(service, summary, start_datetime, end_datetime, timezone)
 
 
+    def update_event_tool(event_id: str, summary: str = None, start_datetime: str = None, end_datetime: str = None, timezone: str = None) -> dict:
+        """
+        Update an existing event on the user's Google Calendar. Only pass the
+        fields that should actually change; leave the rest unset.
+
+        Args:
+            event_id: The ID of the event to update, from a prior list_events call.
+            summary: New title for the event, if changing.
+            start_datetime: New start time, RFC3339 with UTC offset, if changing.
+            end_datetime: New end time, RFC3339 with UTC offset, if changing.
+            timezone: New IANA timezone name, if changing.
+        """
+
+        return update_event(service, event_id, summary, start_datetime, end_datetime, timezone)
+
+
+    def delete_event_tool(event_id: str) -> str:
+        """
+        Delete an event from the user's Google Calendar.
+
+        Args:
+            event_id: The ID of the event to delete, from a prior list_events call.
+        """
+
+        delete_event(service, event_id)
+        return f"Event deleted: {event_id}"
+
+
     def remember_fact(key: str, fact: str) -> str:
         """
         Store or update a fact about the user's preferences in long-term memory.
@@ -285,7 +362,7 @@ def main():
         save_memory(memory)
         return f"Fact remembered: {key} = {fact}"
 
-    tool_functions = [create_event_tool, list_events_tool, remember_fact]
+    tool_functions = [create_event_tool, list_events_tool, update_event_tool, delete_event_tool, remember_fact]
     tools_by_name = {fn.__name__: fn for fn in tool_functions}
 
     # Get the current date and time
