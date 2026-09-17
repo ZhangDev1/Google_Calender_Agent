@@ -12,15 +12,25 @@ from tzlocal import get_localzone_name
 
 import json
 
+from pathlib import Path
+load_dotenv(Path(__file__).parent / ".env")
+
+
+BASE_DIR = Path(__file__).parent
+
+CLIENT_SECRET_PATH = BASE_DIR / "client_secret_47034214311-jvaau3v3idk6no14mjlv6o83vq9k8a7h.apps.googleusercontent.com.json"
+
 
 # Confirmation gate tools that are irreversible (create, update, delete) to prevent accidental changes
 IRREVERSIBLE_TOOLS = {"create_event_tool", "update_event_tool", "delete_event_tool"}
 
 MAX_RANGE_DAYS = 31
 
-MEMORY_PATH = "memory.json"
+MEMORY_PATH = BASE_DIR / "memory.json"
 
-def get_calendar_service(token_path="token.json"):
+TOKEN_PATH = BASE_DIR / "token.json"
+
+def get_calendar_service(token_path=TOKEN_PATH):
     """
     Authenticate and return the Google Calendar service object.
 
@@ -52,7 +62,7 @@ def get_calendar_service(token_path="token.json"):
 
         if not creds or not creds.valid:
             flow = InstalledAppFlow.from_client_secrets_file(
-                "backend/client_secret_47034214311-jvaau3v3idk6no14mjlv6o83vq9k8a7h.apps.googleusercontent.com.json",
+                CLIENT_SECRET_PATH,
                 scopes=["https://www.googleapis.com/auth/calendar.events"]
             )
             flow.run_local_server(port=0)
@@ -281,13 +291,7 @@ def run_agent(client, system_instruction, tool_functions, tools_by_name, user_me
         history.append(genai.types.Content(role="user", parts=[genai.types.Part(text=user_input)]))
 
 
-def main():
-    load_dotenv()  # Load environment variables from .env file
-    client = genai.Client()
-
-    service = get_calendar_service()
-
-
+def build_agent_context(service):
     def list_events_tool(start_datetime: str, end_datetime: str, max_results: int = 10) -> list:
         """
         List events on the user's Google Calendar within a time range.
@@ -389,10 +393,16 @@ def main():
         "Take these into account when interpreting requests."
     )
 
+    return tool_functions, tools_by_name, system_instruction
 
+
+def main():
+    client = genai.Client()
+    service = get_calendar_service()
+
+    tool_functions, tools_by_name, system_instruction = build_agent_context(service)
     run_agent(client, system_instruction, tool_functions, tools_by_name,
-                              "Schedule a test event tomorrow at 3pm for 30 minutes")
-
+              "Schedule a test event tomorrow at 3pm for 30 minutes")
 
 
 
