@@ -231,6 +231,26 @@ def delete_event(service, event_id):
 
 
 def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
+    """
+    Run one exchange: process tool calls until the model produces a final
+    text response, or until it requests a tool that requires human
+    confirmation before it can run.
+
+    This no longer blocks on input() for irreversible tools — that only
+    works for a synchronous REPL, not an HTTP request/response cycle. When
+    an irreversible tool is requested, this function stops immediately and
+    reports back that confirmation is needed; nothing gets executed until a
+    separate call to resolve_confirmation() supplies the answer.
+
+    Returns:
+        dict: One of —
+            {"status": "done", "text": <str>} — the model's final answer.
+            {"status": "needs_confirmation", "tool_name": <str>, "args": <dict>}
+                — an irreversible tool call is pending. `history` already
+                contains the model's Content with this function_call in it
+                (needed so the eventual function_response lines up
+                correctly) — do not modify history until resolving it.
+    """
     max_turns = 20
 
     # Set a max number of turns to prevent infinite loops that drive up token usage
@@ -250,7 +270,7 @@ def run_turn(client, system_instruction, tool_functions, tools_by_name, history,
 
         function_calls = [part.function_call for part in model_content.parts if part.function_call]
         if not function_calls:
-            return response.text  # no more tool calls — this is the final answer
+            return {"status": "done", "text": response.text}  # no more tool calls — this is the final answer
 
         response_parts = []
         for call in function_calls:
@@ -259,13 +279,7 @@ def run_turn(client, system_instruction, tool_functions, tools_by_name, history,
                 print(f"Model requested unsupported tool '{call.name}' with args {call.args} — refusing to execute.")
                 result = {"error": f"Tool '{call.name}' does not exist."}
             elif call.name in IRREVERSIBLE_TOOLS:
-                # Function call is irreversible - ask the user to confirm before executing it
-                print(f"About to run {call.name} with {call.args}")
-                if input("Proceed? [y/N] ").strip().lower() != "y":
-                    result = {"error": "User declined to confirm this action."}
-                else:
-                    result = tools_by_name[call.name](**call.args)
-                    print(f"Executed {call.name} -> {result}")
+                return {"status": "needs_confirmation", "tool_name": call.name, "args": call.args}
             else:
                 # Function call is safe to execute - run it
                 result = tools_by_name[call.name](**call.args)
@@ -274,15 +288,88 @@ def run_turn(client, system_instruction, tool_functions, tools_by_name, history,
 
         history.append(genai.types.Content(role="user", parts=response_parts))
 
-    return "Sorry, I couldn't complete this after multiple attempts."
+    return {"status": "done", "text": "Sorry, I couldn't complete this after multiple attempts."}
+
+
+def resolve_confirmation(client, system_instruction, tool_functions, tools_by_name, history, tool_name, args, confirmed, model="gemini-3.6-flash"):
+    """
+    Resolve a pending confirmation from a previous run_turn() call that
+    returned {"status": "needs_confirmation", ...}, then continue the turn.
+
+    Args:
+        history: The same history list passed to the run_turn() call that
+            produced the pending confirmation — must still end with the
+            model's Content containing the unresolved function_call.
+        tool_name: The tool name from that pending confirmation.
+        args: The args dict from that pending confirmation.
+        confirmed (bool): Whether the user approved the action. Determine
+            this with a plain, deterministic check on the user's reply
+            (e.g. reply.strip().lower() in ("y", "yes")) — not by asking
+            the model to interpret it. This gate exists specifically so
+            model judgment can't be the thing deciding whether a real
+            mutation happens.
+
+    Returns:
+        dict: Same shape as run_turn()'s return value — usually
+            {"status": "done", "text": <str>}, but could be another
+            {"status": "needs_confirmation", ...} if the model's very next
+            move is to request a second irreversible action.
+    """
+    # TODO:
+    #   1. result = tools_by_name[tool_name](**args) if confirmed,
+    #      else {"error": "User declined to confirm this action."}
+    #      (mirrors the old input()-based branch in run_turn)
+    #   2. Wrap `result` in a function_response Part (same pattern as the
+    #      existing loop in run_turn: genai.types.Part.from_function_response(
+    #      name=tool_name, response={"result": result})) and append it to
+    #      `history` as a new Content(role="user", parts=[that_part]).
+    #   3. Call run_turn(client, system_instruction, tool_functions,
+    #      tools_by_name, history, model) again with the now-updated
+    #      history, and return whatever it returns — this lets the model
+    #      react to the real result and produce its next response (or
+    #      immediately hit another confirmation, which is fine to pass
+    #      straight through).
+
+
+    result = None
+    if confirmed:
+        result = tools_by_name[tool_name](**args)
+        print(f"User confirmed {tool_name} -> {result}")
+    else:
+        result = {"error": "User declined to confirm this action."}
+        print(f"User declined {tool_name} with args {args}")
+
+
+    function_response_content = genai.types.Content(
+        role="user", 
+        parts=[
+            genai.types.Part.from_function_response(
+                name=tool_name,
+                response={"result": result},
+            )
+        ]
+    )
+
+    history.append(function_response_content)
+
+    return run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
 
 
 def run_agent(client, system_instruction, tool_functions, tools_by_name, user_message, model="gemini-3.6-flash"):
+
     history = [genai.types.Content(role="user", parts=[genai.types.Part(text=user_message)])]
 
     while True:
-        reply = run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
-        print(f"Agent: {reply}")
+        result = run_turn(client, system_instruction, tool_functions, tools_by_name, history, model)
+
+        while result["status"] == "needs_confirmation":
+            print(f"About to run {result['tool_name']} with {result['args']}")
+            confirmed = input("Proceed? [y/N] ").strip().lower() == "y"
+            result = resolve_confirmation(client, system_instruction, tool_functions,
+                                           tools_by_name, history, result["tool_name"],
+                                           result["args"], confirmed, model)
+
+        print(f"Agent: {result['text']}")
 
         # This is temporary for testing so the user can have turns with the agent
         user_input = input("You: ")
