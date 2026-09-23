@@ -82,6 +82,24 @@ the next layer of complexity.
 - [ ] **Phase 2 — Bare-bones RN app.** A screen with a text box hitting the
       Phase 1 backend. Establishes React Native project setup, API calls,
       and mobile OAuth/token handoff before audio enters the picture.
+    - **Backend as an HTTP API** — [x] done. `backend/api.py` (FastAPI):
+      `GET /health`, `POST /chat` (`{session_id, message}` ->
+      `{response}`). In-memory `sessions` dict keyed by `session_id`
+      (`{"history": [...], "pending": ...}`) stands in for real per-user
+      session storage — same "don't solve it before you need it" call as
+      `token.json`/`memory.json`; doesn't survive a server restart or scale
+      past one process, deliberately, for now.
+    - **Confirmation gate over HTTP** — [x] done. `input()` cannot block
+      across two separate HTTP requests, so `run_turn` was restructured to
+      return a `{"status": "needs_confirmation", ...}` result instead of
+      executing an irreversible tool immediately; the pending action is
+      stashed on the session, and a new `resolve_confirmation()` executes
+      it once a follow-up request supplies a deterministic yes/no (not
+      model-interpreted — same reasoning as the original gate). Verified
+      live over real HTTP calls: request 1 triggers the gate with nothing
+      created yet, request 2 ("yes") actually creates the event.
+    - **React Native app** — [ ] not started. Text box, calls `/chat`,
+      displays the response. This is the remaining piece of Phase 2.
 - [ ] **Phase 3 — Voice, non-streaming.** Record button → send audio blob →
       transcribe → run through Phase 1 agent → speak back the response.
       Proves the mobile audio capture/playback pipeline in isolation.
