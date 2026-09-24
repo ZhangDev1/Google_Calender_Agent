@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, TextInput, StyleSheet } from 'react-native';
+import { Button, Pressable, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 
@@ -8,13 +8,49 @@ import { ThemedView } from '@/components/themed-view';
 import { useThemePreference } from '@/context/theme-preference';
 import { useTheme } from '@/hooks/use-theme';
 
+import { API_URL } from '@/constants/api';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import uuid from 'react-native-uuid';
 
+type Message = { role: 'user' | 'assistant'; text: string };
 
 export default function HomeScreen() {
   const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [sending, setSending] = useState(false);
   const { scheme, toggle } = useThemePreference();
   const colors = useTheme();
+  const [sessionId] = useState(() => uuid.v4() as string);
+
+  async function sendMessage() {
+    const text = input.trim();
+    if (!text || sending) return;
+
+    setMessages((prev) => [...prev, { role: 'user', text }]);
+    setInput('');
+    setSending(true);
+
+    try {
+      const res = await fetch(`${API_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
+      }
+      const data: { response: string } = await res.json();
+      setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `Couldn't reach the server: ${detail}` },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <ThemedView style={styles.container}>
@@ -25,16 +61,34 @@ export default function HomeScreen() {
           </ThemedText>
         </ThemedView>
 
+        <ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent}>
+          {messages.map((message, i) => (
+            <ThemedView
+              key={i}
+              type={message.role === 'user' ? 'backgroundSelected' : 'backgroundElement'}
+              style={[
+                styles.messageBubble,
+                message.role === 'user' ? styles.messageBubbleUser : styles.messageBubbleAssistant,
+              ]}>
+              <ThemedText>{message.text}</ThemedText>
+            </ThemedView>
+          ))}
+        </ScrollView>
+
         <TextInput
           value={input}
           onChangeText={setInput}
           placeholder="Ask about your calendar."
           placeholderTextColor={colors.textSecondary}
+          editable={!sending}
+          onSubmitEditing={sendMessage}
           style={[
             styles.input,
             { backgroundColor: colors.backgroundElement, color: colors.text },
           ]}
         />
+
+        <Button title={sending ? 'Sending...' : 'Submit'} onPress={sendMessage} disabled={sending} />
 
         <Pressable onPress={toggle} style={({ pressed }) => pressed && styles.pressed}>
           <ThemedView type="backgroundElement" style={styles.toggleButton}>
@@ -82,6 +136,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.four,
     borderRadius: Spacing.four,
+  },
+  messages: {
+    width: '100%',
+    flexGrow: 0,
+  },
+  messagesContent: {
+    gap: Spacing.two,
+    paddingVertical: Spacing.two,
+  },
+  messageBubble: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.three,
+    maxWidth: '85%',
+  },
+  messageBubbleUser: {
+    alignSelf: 'flex-end',
+  },
+  messageBubbleAssistant: {
+    alignSelf: 'flex-start',
   },
   input: {
     borderRadius: Spacing.two,

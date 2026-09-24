@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
@@ -10,6 +11,17 @@ load_dotenv(Path(__file__).parent / ".env") # Load environment variables from .e
 
 
 app = FastAPI()
+
+# Dev-only: the Expo web dev server runs on a different port than this API,
+# so the browser treats it as a different origin and preflights every
+# request. allow_origins=["*"] is fine for local development; lock this down
+# to your actual deployed frontend origin(s) before this goes anywhere real.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 client = genai.Client()
 service = get_calendar_service()
