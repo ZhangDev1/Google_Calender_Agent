@@ -79,7 +79,7 @@ the next layer of complexity.
       [x] scope limits, [x] confirmation gate before irreversible actions.
       All four built and verified. See "Guardrails" section below for what
       each one actually does.
-- [ ] **Phase 2 — Bare-bones RN app.** A screen with a text box hitting the
+- [x] **Phase 2 — Bare-bones RN app.** A screen with a text box hitting the
       Phase 1 backend. Establishes React Native project setup, API calls,
       and mobile OAuth/token handoff before audio enters the picture.
     - **Backend as an HTTP API** — [x] done. `backend/api.py` (FastAPI):
@@ -98,8 +98,33 @@ the next layer of complexity.
       model-interpreted — same reasoning as the original gate). Verified
       live over real HTTP calls: request 1 triggers the gate with nothing
       created yet, request 2 ("yes") actually creates the event.
-    - **React Native app** — [ ] not started. Text box, calls `/chat`,
-      displays the response. This is the remaining piece of Phase 2.
+    - **React Native app** — [x] done. Built on the default Expo Router
+      (`expo-router` + `expo-router/ui` tabs) scaffold in `mobile/`. The home
+      screen (`mobile/src/app/index.tsx`) holds a `TextInput`, a scrollable
+      message list (`{role, text}` bubbles, user vs. assistant styled
+      differently), and a `Submit` button wired to `sendMessage()`, which
+      `POST`s `{session_id, message}` to `/chat` and appends the returned
+      `response` as a new bubble. `session_id` is a `uuid.v4()` generated
+      once per app session via a `useState` lazy initializer and held stable
+      for the component's lifetime. `API_URL` (`mobile/src/constants/api.ts`)
+      is picked by `Platform.OS`: `localhost` on web, LAN IP on native — the
+      backend has to run with `uvicorn api:app --host 0.0.0.0` for the LAN
+      IP case to be reachable from a phone. Verified end-to-end over a real
+      HTTP round trip from the app to the backend and back.
+    - **Light/dark theme toggle** — [x] done, not originally scoped but built
+      alongside the chat screen since it surfaced a real architectural gap:
+      `_layout.tsx` (react-navigation's `ThemeProvider`) and `use-theme.ts`
+      (the app's own `Colors` lookup) were two *independent* systems, both
+      reading the raw OS scheme via `useColorScheme()` with no shared state.
+      Consolidated both onto one `ThemePreferenceProvider` context
+      (`mobile/src/context/theme-preference.tsx`) holding a `'light' |
+      'dark' | 'system'` preference and the resolved `scheme`; `use-theme.ts`
+      and `use-color-scheme.ts`/`.web.ts` now all read from it instead of
+      the system directly, and a toggle button on the home screen flips it.
+      `app-tabs.web.tsx` and `web-badge.tsx` were also switched over from
+      importing `useColorScheme` straight from `react-native` — they'd have
+      silently stayed on the OS setting otherwise, out of sync with the rest
+      of the app.
 - [ ] **Phase 3 — Voice, non-streaming.** Record button → send audio blob →
       transcribe → run through Phase 1 agent → speak back the response.
       Proves the mobile audio capture/playback pipeline in isolation.
@@ -218,6 +243,35 @@ the next layer of complexity.
   actual text sent to the model. Triple-quoted strings don't
   auto-concatenate the way adjacent string literals in parentheses do —
   fixed by returning to the parenthesized-adjacent-literals form.
+
+### Mobile app (Expo / React Native)
+- Running `expo` directly in a shell failed with "command not found" —
+  `expo` is a local dependency (`mobile/node_modules/.bin/expo`), not a
+  global install, and that folder isn't on PATH by default. Fixed by using
+  `npm start` (already mapped to `expo start` in `package.json`) or
+  `npx expo start` instead of a bare `expo` command; avoided installing the
+  deprecated standalone `expo-cli` globally, which would conflict with the
+  local `expo` package.
+- A bare `<TextInput>` rendered with no visible border, background, or
+  padding — React Native gives it zero default styling, so it was present
+  but genuinely invisible against the themed background. Fixed by adding an
+  explicit style; later revisited to fill it with `colors.backgroundElement`
+  instead of a hardcoded border color, matching the pill/card visual
+  language already used elsewhere (`TabButton`, the theme-toggle button)
+  rather than inventing a new one-off border color not in the palette.
+- `session_id` was computed as `uuid.v4()` directly in the component body,
+  so a *new* session ID was generated on every re-render — including every
+  keystroke into the `TextInput` — meaning no two requests would ever land
+  in the same backend session. Fixed with `useState(() => uuid.v4())`, a
+  lazy initializer that only runs once, on mount.
+- The web build's `/chat` request failed with **405 Method Not Allowed**.
+  Cause: the Expo web dev server and FastAPI run on different ports, so the
+  browser treats them as different origins and sends a preflight `OPTIONS`
+  request before the real `POST`; `api.py` had no CORS middleware, so
+  FastAPI (correctly) replied 405 since only `POST` was declared for that
+  route. Fixed by adding `CORSMiddleware` to `api.py`
+  (`allow_origins=["*"]` — fine for local dev, needs locking down to a real
+  origin before any deployment).
 
 ## Guardrails
 
