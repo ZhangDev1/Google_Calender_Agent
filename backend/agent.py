@@ -230,6 +230,31 @@ def delete_event(service, event_id):
     return
 
 
+def transcribe_audio(client, audio_bytes, mime_type, model="gemini-3.6-flash"):
+    """
+    Transcribe spoken audio to text, verbatim — no interpretation, no
+    calendar logic. Keeps voice input decoupled from the agent loop: the
+    caller takes the returned string and feeds it into run_turn exactly
+    like a typed message, so run_turn/resolve_confirmation stay untouched.
+
+    Args:
+        client: genai.Client instance (same one used for generate_content elsewhere).
+        audio_bytes (bytes): raw audio file contents.
+        mime_type (str): e.g. "audio/m4a" — the audio's actual format.
+
+    Returns:
+        str: the transcript.
+    """
+    response = client.models.generate_content(
+        model=model,
+        contents=[genai.types.Content(role="user", parts=[
+            genai.types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+            genai.types.Part(text="Transcribe this audio verbatim. Return only the transcript, nothing else."),
+        ])],
+    )
+    return response.text.strip()
+
+
 def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):
     """
     Run one exchange: process tool calls until the model produces a final

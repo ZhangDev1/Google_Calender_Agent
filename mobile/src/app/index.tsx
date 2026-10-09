@@ -2,6 +2,13 @@ import { useState } from 'react';
 import { Button, Pressable, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  requestRecordingPermissionsAsync,
+  RecordingPresets,
+} from 'expo-audio';
+import * as Speech from 'expo-speech';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -21,6 +28,8 @@ export default function HomeScreen() {
   const { scheme, toggle } = useThemePreference();
   const colors = useTheme();
   const [sessionId] = useState(() => uuid.v4() as string);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
 
   async function sendMessage() {
     const text = input.trim();
@@ -41,6 +50,56 @@ export default function HomeScreen() {
       }
       const data: { response: string } = await res.json();
       setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `Couldn't reach the server: ${detail}` },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function toggleRecording() {
+    if (recorderState.isRecording) {
+      await recorder.stop();
+      await sendRecording(recorder.uri);
+      return;
+    }
+
+    const { granted } = await requestRecordingPermissionsAsync();
+    if (!granted) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: "Can't record without microphone permission." },
+      ]);
+      return;
+    }
+
+    recorder.record();
+  }
+
+  async function sendRecording(uri: string | null) {
+    if (!uri || sending) return;
+    setSending(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('session_id', sessionId);
+      formData.append('audio', { uri, name: 'recording.m4a', type: 'audio/m4a' } as any);
+
+      const res = await fetch(`${API_URL}/voice`, { method: 'POST', body: formData });
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`);
+      }
+      const data: { transcript: string; response: string } = await res.json();
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', text: data.transcript },
+        { role: 'assistant', text: data.response },
+      ]);
+      Speech.speak(data.response);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
@@ -89,6 +148,12 @@ export default function HomeScreen() {
         />
 
         <Button title={sending ? 'Sending...' : 'Submit'} onPress={sendMessage} disabled={sending} />
+
+        <Button
+          title={recorderState.isRecording ? '⏹ Stop' : '🎙️ Record'}
+          onPress={toggleRecording}
+          disabled={sending}
+        />
 
         <Pressable onPress={toggle} style={({ pressed }) => pressed && styles.pressed}>
           <ThemedView type="backgroundElement" style={styles.toggleButton}>

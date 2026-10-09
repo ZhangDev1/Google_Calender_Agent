@@ -32,6 +32,10 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "expo-audio",
+        { "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone to hear your calendar requests." }
       ]
     ],
     "experiments": {
