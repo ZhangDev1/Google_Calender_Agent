@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Button, Pressable, ScrollView, TextInput, StyleSheet } from 'react-native';
+import { Button, Platform, Pressable, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   useAudioRecorder,
   useAudioRecorderState,
   requestRecordingPermissionsAsync,
+  setAudioModeAsync,
   RecordingPresets,
 } from 'expo-audio';
 import * as Speech from 'expo-speech';
@@ -77,6 +78,10 @@ export default function HomeScreen() {
       return;
     }
 
+    // iOS rejects allowsRecording: true unless playsInSilentMode is also
+    // true in the same call — the two can't be set independently.
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    await recorder.prepareToRecordAsync();
     recorder.record();
   }
 
@@ -87,7 +92,14 @@ export default function HomeScreen() {
     try {
       const formData = new FormData();
       formData.append('session_id', sessionId);
-      formData.append('audio', { uri, name: 'recording.m4a', type: 'audio/m4a' } as any);
+
+      // The old RN convention of appending {uri, name, type} directly isn't
+      // reliably recognized by RN 0.86's FormData/networking implementation
+      // ("Unsupported FormDataPart implementation"). Fetching the local URI
+      // and appending a real Blob works on both native and web.
+      const blob = await (await fetch(uri)).blob();
+      const filename = Platform.OS === 'web' ? 'recording.webm' : 'recording.m4a';
+      formData.append('audio', blob, filename);
 
       const res = await fetch(`${API_URL}/voice`, { method: 'POST', body: formData });
       if (!res.ok) {

@@ -4,7 +4,7 @@ const PORT = 8000;
 
 // Your machine's current LAN IP (from `ipconfig` -> "IPv4 Address"). Update
 // this if it changes, e.g. after reconnecting Wi-Fi or switching networks.
-const LAN_IP = '192.168.68.65';
+const LAN_IP = '192.168.68.63';
 
 // The backend has to be started with `--host 0.0.0.0` for the LAN_IP case to
 // work: `uvicorn api:app --host 0.0.0.0 --port 8000 --reload`. The default
