@@ -243,7 +243,7 @@ def transcribe_audio(client, audio_bytes, mime_type, model="gemini-3.6-flash"):
         mime_type (str): e.g. "audio/m4a" — the audio's actual format.
 
     Returns:
-        str: the transcript.
+        str: the transcript, or "" if nothing intelligible was said.
     """
     response = client.models.generate_content(
         model=model,
@@ -252,7 +252,7 @@ def transcribe_audio(client, audio_bytes, mime_type, model="gemini-3.6-flash"):
             genai.types.Part(text="Transcribe this audio verbatim. Return only the transcript, nothing else."),
         ])],
     )
-    return response.text.strip()
+    return (response.text or "").strip()
 
 
 def run_turn(client, system_instruction, tool_functions, tools_by_name, history, model="gemini-3.6-flash"):

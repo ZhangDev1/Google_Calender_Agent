@@ -125,9 +125,28 @@ the next layer of complexity.
       importing `useColorScheme` straight from `react-native` — they'd have
       silently stayed on the OS setting otherwise, out of sync with the rest
       of the app.
-- [ ] **Phase 3 — Voice, non-streaming.** Record button → send audio blob →
+- [x] **Phase 3 — Voice, non-streaming.** Record button → send audio blob →
       transcribe → run through Phase 1 agent → speak back the response.
       Proves the mobile audio capture/playback pipeline in isolation.
+    - **Capture/playback** — [x] `expo-audio` records (tap Record / Stop),
+      the file is `POST`ed as multipart form data to `POST /voice`
+      (`session_id`, `audio` -> `{transcript, response}`), and `expo-speech`
+      reads the response aloud on-device. Both the transcript and the reply
+      are appended to the same message list as typed chat.
+    - **Transcription stays decoupled** — [x] `transcribe_audio()` is a
+      separate, verbatim-only Gemini call; its output is fed into the exact
+      same `_handle_message()` path as `/chat`. The agent still doesn't know
+      the input was spoken, and a confirmation gate raised by voice can be
+      answered by typing (or vice versa) since both share `session["pending"]`.
+    - **Voice-friendly confirmation gate** — [x] the prompt is now a
+      readable sentence (`describe_pending_action`, e.g. *Create "Dentist"
+      from ... to ...? Say yes to confirm.*) instead of a raw args dict, since
+      it gets spoken aloud. The yes-check is still deterministic, but
+      normalizes punctuation and accepts a fixed list of affirmatives
+      (`AFFIRMATIVE_REPLIES`) — see Roadblocks.
+    - **Failure handling** — [x] a failed turn (expired Google auth, Gemini
+      quota, anything else) rolls the session back instead of leaving it
+      broken, and the API returns a readable `detail` that the app shows.
 - [ ] **Phase 4 — Full streaming conversation.** Swap in Gemini Live over
       WebSocket; mic streams continuously, model can ask clarifying
       questions, handle barge-in, etc. This is the target experience.
@@ -273,6 +292,43 @@ the next layer of complexity.
   (`allow_origins=["*"]` — fine for local dev, needs locking down to a real
   origin before any deployment).
 
+### Voice (Phase 3)
+- The old RN convention of appending `{uri, name, type}` to `FormData`
+  failed on RN 0.86 with "Unsupported FormDataPart implementation". Fixed by
+  `fetch`ing the local recording URI into a real `Blob` and appending that,
+  which works on both native and web.
+- iOS rejects `setAudioModeAsync({ allowsRecording: true })` unless
+  `playsInSilentMode: true` is set in the same call.
+- Leaving `allowsRecording` on after a recording routes iOS playback to the
+  quiet earpiece, so the spoken reply was barely audible. Fixed by turning
+  recording mode back off right after `recorder.stop()`. Speech from a
+  previous reply is also stopped when a new recording starts.
+- Saying "yes" at the confirmation gate silently declined: transcription
+  returns `"Yes."`, and the gate only matched exactly `y`/`yes`. Fixed by
+  stripping punctuation/case before matching against a fixed affirmative
+  list. Still not model-interpreted — "yes but make it 4pm" is a decline.
+- RN uploads can arrive as `application/octet-stream`, which isn't a valid
+  audio type for Gemini. The backend now falls back to inferring the MIME
+  type from the file extension (`.m4a` native, `.webm` web). Verified
+  working end-to-end from the web build as well as native.
+- Silent recordings came back with an empty (or `None`) transcript, which
+  crashed on `.strip()` or ran the agent on an empty message. Now `/voice`
+  replies "didn't catch that" without calling the agent.
+- An exception mid-turn (e.g. an expired Google refresh token raising
+  `RefreshError`) left `history` ending in a `function_call` with no
+  `function_response`, so every later request in that session failed too.
+  `_handle_message` now rolls history and `pending` back on failure — except
+  when a confirmed tool already ran, where its result is kept so retrying
+  "yes" can't create/delete twice.
+- Reauth only runs at server startup (`get_calendar_service()` at import).
+  While the OAuth consent screen is in **Testing**, Google expires refresh
+  tokens after 7 days, so expect a `503 Google Calendar authorization
+  expired` roughly weekly — restarting the backend falls through to the
+  browser sign-in flow. Switching the consent screen to **In production**
+  removes the 7-day expiry. Real per-user mobile sign-in (and anything
+  that works on Cloud Run, where `run_local_server` can't open a browser) is
+  deferred to Phase 5.
+
 ## Guardrails
 
 What each currently-implemented guardrail actually protects against:
@@ -293,7 +349,9 @@ What each currently-implemented guardrail actually protects against:
    anyway — this is about UX, not safety.
 4. **Confirmation gate** (`run_turn`, `IRREVERSIBLE_TOOLS`). Before
    executing any tool in `IRREVERSIBLE_TOOLS` (currently
-   `create_event_tool`), pauses for an explicit human `y`/`N` regardless of
+   `create_event_tool`, `update_event_tool`, `delete_event_tool`), pauses
+   for an explicit human yes (a fixed list of affirmatives, matched
+   deterministically — see `is_affirmative` in `api.py`) regardless of
    what the model's accompanying text says. Purpose: the model asking the
    user "should I proceed?" conversationally is not a guarantee it won't
    *also* call the tool in the same breath — this is a structural

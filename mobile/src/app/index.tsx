@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button, Platform, Pressable, ScrollView, TextInput, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -22,6 +22,16 @@ import uuid from 'react-native-uuid';
 
 type Message = { role: 'user' | 'assistant'; text: string };
 
+// The backend returns {detail} on errors (expired Google auth, quota, ...);
+// surface that instead of a bare status code.
+async function errorFromResponse(res: Response): Promise<Error> {
+  try {
+    const data: { detail?: string } = await res.json();
+    if (typeof data.detail === 'string') return new Error(data.detail);
+  } catch {}
+  return new Error(`Request failed: ${res.status}`);
+}
+
 export default function HomeScreen() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -31,6 +41,7 @@ export default function HomeScreen() {
   const [sessionId] = useState(() => uuid.v4() as string);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
+  const scrollRef = useRef<ScrollView>(null);
 
   async function sendMessage() {
     const text = input.trim();
@@ -47,7 +58,7 @@ export default function HomeScreen() {
         body: JSON.stringify({ session_id: sessionId, message: text }),
       });
       if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
+        throw await errorFromResponse(res);
       }
       const data: { response: string } = await res.json();
       setMessages((prev) => [...prev, { role: 'assistant', text: data.response }]);
@@ -55,7 +66,7 @@ export default function HomeScreen() {
       const detail = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', text: `Couldn't reach the server: ${detail}` },
+        { role: 'assistant', text: `Error: ${detail}` },
       ]);
     } finally {
       setSending(false);
@@ -65,10 +76,14 @@ export default function HomeScreen() {
   async function toggleRecording() {
     if (recorderState.isRecording) {
       await recorder.stop();
+      // Leaving recording mode on routes speech playback to the quiet
+      // earpiece on iOS instead of the speaker.
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       await sendRecording(recorder.uri);
       return;
     }
 
+    Speech.stop(); // don't talk over the user
     const { granted } = await requestRecordingPermissionsAsync();
     if (!granted) {
       setMessages((prev) => [
@@ -103,12 +118,12 @@ export default function HomeScreen() {
 
       const res = await fetch(`${API_URL}/voice`, { method: 'POST', body: formData });
       if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
+        throw await errorFromResponse(res);
       }
       const data: { transcript: string; response: string } = await res.json();
       setMessages((prev) => [
         ...prev,
-        { role: 'user', text: data.transcript },
+        ...(data.transcript ? [{ role: 'user' as const, text: data.transcript }] : []),
         { role: 'assistant', text: data.response },
       ]);
       Speech.speak(data.response);
@@ -116,7 +131,7 @@ export default function HomeScreen() {
       const detail = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', text: `Couldn't reach the server: ${detail}` },
+        { role: 'assistant', text: `Error: ${detail}` },
       ]);
     } finally {
       setSending(false);
@@ -128,11 +143,15 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ThemedView style={styles.heroSection}>
           <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+            Calendar Agent
           </ThemedText>
         </ThemedView>
 
-        <ScrollView style={styles.messages} contentContainerStyle={styles.messagesContent}>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.messages}
+          contentContainerStyle={styles.messagesContent}
+          onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
           {messages.map((message, i) => (
             <ThemedView
               key={i}
