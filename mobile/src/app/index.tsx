@@ -151,6 +151,7 @@ export default function HomeScreen() {
           ref={scrollRef}
           style={styles.messages}
           contentContainerStyle={styles.messagesContent}
+          showsVerticalScrollIndicator
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}>
           {messages.map((message, i) => (
             <ThemedView
@@ -216,7 +217,6 @@ const styles = StyleSheet.create({
   heroSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
     paddingHorizontal: Spacing.four,
     gap: Spacing.four,
   },
@@ -233,9 +233,11 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.four,
     borderRadius: Spacing.four,
   },
+  // flex: 1 makes the list fill the space between the title and the input
+  // and scroll inside it, instead of growing and pushing the title off-screen.
   messages: {
     width: '100%',
-    flexGrow: 0,
+    flex: 1,
   },
   messagesContent: {
     gap: Spacing.two,
