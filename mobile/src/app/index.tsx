@@ -17,7 +17,7 @@ import { useThemePreference } from '@/context/theme-preference';
 import { useTheme } from '@/hooks/use-theme';
 
 import { API_URL } from '@/constants/api';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { MaxContentWidth, Spacing } from '@/constants/theme';
 import uuid from 'react-native-uuid';
 
 type Message = { role: 'user' | 'assistant'; text: string };
@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     alignItems: 'center',
     gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
+    paddingVertical: Spacing.three,
     maxWidth: MaxContentWidth,
   },
   heroSection: {

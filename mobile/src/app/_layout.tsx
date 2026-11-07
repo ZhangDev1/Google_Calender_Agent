@@ -1,8 +1,7 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Slot, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
 import { ThemePreferenceProvider, useThemePreference } from '@/context/theme-preference';
 
 
@@ -14,12 +13,12 @@ function AppShell() {
   return (
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
-      <AppTabs />
+      <Slot />
     </ThemeProvider>
   );
 }
 
-export default function TabLayout() {
+export default function RootLayout() {
   return (
     <ThemePreferenceProvider>
       <AppShell />

@@ -291,6 +291,11 @@ the next layer of complexity.
   route. Fixed by adding `CORSMiddleware` to `api.py`
   (`allow_origins=["*"]` — fine for local dev, needs locking down to a real
   origin before any deployment).
+- The Expo scaffold's tab navigation was removed once the app settled on a
+  single chat screen: the web nav bar floated over the page and hid the
+  title, and it still carried template branding. `_layout.tsx` now renders
+  the screen through a plain `Slot`, so `app-tabs`, `explore.tsx` and
+  `web-badge.tsx` mentioned earlier in this doc no longer exist.
 
 ### Voice (Phase 3)
 - The old RN convention of appending `{uri, name, type}` to `FormData`
