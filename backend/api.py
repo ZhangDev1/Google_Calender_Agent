@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -65,14 +66,30 @@ def is_affirmative(reply: str) -> bool:
     return normalized in AFFIRMATIVE_REPLIES
 
 
+def format_datetime(value: str) -> str:
+    """Turn an ISO timestamp into speakable text, e.g. "November 8th 2026 at 12:30 pm"."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return str(value)  # the model chose this string, so don't let it break the prompt
+
+    day = parsed.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    hour = parsed.hour % 12 or 12
+    minutes = f":{parsed.minute:02d}" if parsed.minute else ""
+    period = "am" if parsed.hour < 12 else "pm"
+    return f"{parsed:%B} {day}{suffix} {parsed.year} at {hour}{minutes} {period}"
+
+
 def describe_pending_action(tool_name: str, args: dict) -> str:
     """Human-readable (and speakable) confirmation prompt for an irreversible tool call."""
     if tool_name == "create_event_tool":
-        return (f"Create \"{args.get('summary', 'an event')}\" from {args.get('start_datetime')} "
-                f"to {args.get('end_datetime')}? Say yes to confirm.")
+        return (f"Create \"{args.get('summary', 'an event')}\" from {format_datetime(args.get('start_datetime'))} "
+                f"to {format_datetime(args.get('end_datetime'))}? Say yes to confirm.")
     if tool_name == "update_event_tool":
-        changes = ", ".join(f"{k.replace('_', ' ')} to {v}" for k, v in args.items()
-                            if k != "event_id" and v is not None)
+        changes = ", ".join(
+            f"{k.replace('_datetime', ' time')} to {format_datetime(v) if k.endswith('_datetime') else v}"
+            for k, v in args.items() if k != "event_id" and v is not None)
         return f"Update that event, changing {changes or 'nothing'}? Say yes to confirm."
     if tool_name == "delete_event_tool":
         return "Delete that event? Say yes to confirm."

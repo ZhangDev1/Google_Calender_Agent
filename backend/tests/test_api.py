@@ -28,6 +28,33 @@ def test_is_affirmative_rejects_everything_else(api, reply):
     assert not api.is_affirmative(reply)
 
 
+@pytest.mark.parametrize("value, expected", [
+    ("2026-11-08T12:00:00", "November 8th 2026 at 12 pm"),
+    ("2026-11-08T12:30:00", "November 8th 2026 at 12:30 pm"),
+    ("2026-11-01T00:00:00-05:00", "November 1st 2026 at 12 am"),
+    ("2026-11-02T09:05:00", "November 2nd 2026 at 9:05 am"),
+    ("2026-11-03T13:00:00", "November 3rd 2026 at 1 pm"),
+    ("2026-11-11T23:59:00", "November 11th 2026 at 11:59 pm"),
+    ("2026-11-22T10:00:00", "November 22nd 2026 at 10 am"),
+    ("tomorrow at noon", "tomorrow at noon"),
+])
+def test_format_datetime_is_speakable(api, value, expected):
+    assert api.format_datetime(value) == expected
+
+
+def test_describe_create_reads_times_naturally(api):
+    text = api.describe_pending_action("create_event_tool", {
+        "summary": "Lunch with Sam", "start_datetime": "2026-11-08T12:00:00", "end_datetime": "2026-11-08T12:30:00"})
+    assert text == ('Create "Lunch with Sam" from November 8th 2026 at 12 pm '
+                    'to November 8th 2026 at 12:30 pm? Say yes to confirm.')
+
+
+def test_describe_update_reads_times_naturally(api):
+    text = api.describe_pending_action("update_event_tool", {
+        "event_id": "e1", "start_datetime": "2026-11-08T13:00:00-05:00", "end_datetime": None})
+    assert text == "Update that event, changing start time to November 8th 2026 at 1 pm? Say yes to confirm."
+
+
 def test_describe_create_is_readable(api):
     text = api.describe_pending_action("create_event_tool", {
         "summary": "Dentist", "start_datetime": "2026-10-28T15:00:00", "end_datetime": "2026-10-28T15:30:00"})

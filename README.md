@@ -7,6 +7,11 @@ tomorrow?" or say "schedule lunch with Sam Friday at noon". A Gemini-powered
 agent checks for conflicts, asks before changing anything, and creates, updates
 or deletes real events through the Google Calendar API.
 
+[![Watch the demo](https://img.youtube.com/vi/WyWmV7Jn-CY/hqdefault.jpg)](https://youtu.be/WyWmV7Jn-CY)
+
+▶ [Watch the demo](https://youtu.be/WyWmV7Jn-CY): checking the schedule, booking an
+event, handling a conflict and deleting an event, all by voice (web build).
+
 The agent loop is written by hand rather than with an agent framework, so the
 tool dispatch, memory and guardrails are all visible in the code.
 [ARCHITECTURE.md](ARCHITECTURE.md) has the design, the roadmap, and the
