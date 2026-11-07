@@ -14,8 +14,8 @@ problems hit along the way and how each was solved.
 
 ## Features
 
-- **Voice or text input.** Record a request in the app, or type it. Replies are
-  spoken back on the device.
+- **Voice or text input.** Record a request in the app, or type it. Replies to
+  voice requests are spoken aloud on the device.
 - **Tool-calling agent.** `list_events`, `create_event`, `update_event`,
   `delete_event` and `remember_fact`. The agent chains them, for example
   checking for conflicts before it creates an event.
@@ -44,6 +44,45 @@ speak the reply ◀── {response} ──────── Google Calendar AP
 Voice is only an input method. `/voice` turns the recording into text and
 sends it through the same code path as a typed `/chat` message, so the agent
 never knows whether the request was spoken.
+
+## Design decisions
+
+**The agent loop is hand-written.** Gemini's automatic function calling runs
+tools as soon as the model asks for them, which leaves no place to stop and
+check a call first. The manual loop inspects every requested tool call, then
+decides whether to run it, refuse it or pause for the user. It was also built
+this way to learn how agents work, rather than hide that behind a framework.
+
+**Safety rules live in code, not in the prompt.** Prompts shape what a model
+does, but they don't guarantee it. In testing, the model requested a full year
+of events after being told to pick a sensible range, and it called tools that
+didn't exist. So the 31-day query limit and the rejection of unregistered tools
+are hard checks that run whatever the model decides.
+
+**The model can't approve its own actions.** Creating, updating and deleting
+events all stop at a confirmation gate. The model could ask "should I proceed?"
+and make the tool call in the same response, so the prompt alone isn't enough.
+The user's reply is matched against a fixed list of affirmatives, with no model
+involved. "Yes." passes, but "yes but make it 4pm" counts as a no. Because a
+confirmation spans two HTTP requests, the pending action is stored on the
+session and only runs when the follow-up reply arrives.
+
+**Voice is kept separate from the agent.** Transcription is its own step, and
+its output goes through the same code path as typed text. The agent needed no
+changes to support voice, and a confirmation raised by voice can be answered by
+typing, or the other way around.
+
+**Failed requests can't corrupt a session.** Gemini expects every tool call in
+the history to have a matching result, so an error partway through a turn would
+break every later request in that session. The session is rolled back to its
+state before the message. The exception is a confirmed action that already ran:
+its result is kept, so retrying "yes" can't create or delete an event twice.
+
+**Storage is as simple as the current scale allows.** Sessions live in a plain
+dictionary, preferences in `memory.json`, and the Google token in `token.json`.
+That's enough for one user on one server, and each one has a clear replacement
+when that stops being true: a session store, a queryable database and per-user
+token storage.
 
 ## Stack
 
@@ -87,8 +126,14 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-echo "GOOGLE_API_KEY=your-key-here" > .env
-uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+uvicorn api:app --port 8000 --reload
+```
+
+Before starting the server, create a file named `.env` in `backend/` containing
+one line:
+
+```
+GOOGLE_API_KEY=your-key-here
 ```
 
 The first time it starts, a browser window opens for Google sign-in. The
@@ -103,8 +148,9 @@ npm start          # then press w for web, or scan the QR code with Expo Go
 ```
 
 To use the app on a phone, set `LAN_IP` in `mobile/src/constants/api.ts` to
-your computer's local IP address. The phone and computer must be on the same
-network.
+your computer's local IP address, and start the backend with `--host 0.0.0.0`
+so the phone can reach it. The phone and computer must be on the same network.
+Only do this on a network you trust (see Known limitations).
 
 ### Tests
 
@@ -125,8 +171,15 @@ python -m pytest tests
 
 ## Known limitations
 
+- The API has no login and allows requests from any origin, so it's for local
+  development only. With `--host 0.0.0.0`, anyone on your network can reach it
+  and change your calendar.
 - The backend serves one Google account: whoever signs in on the server.
   Per-user sign-in from the app is planned for Phase 5.
 - Sessions are kept in memory and are lost when the server restarts.
 - While the OAuth consent screen is in *Testing* mode, Google expires the
   sign-in after 7 days. Restart the backend to sign in again.
+
+## License
+
+[MIT](LICENSE)

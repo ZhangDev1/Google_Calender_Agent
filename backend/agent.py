@@ -481,6 +481,19 @@ def build_agent_context(service):
     tool_functions = [create_event_tool, list_events_tool, update_event_tool, delete_event_tool, remember_fact]
     tools_by_name = {fn.__name__: fn for fn in tool_functions}
 
+    return tool_functions, tools_by_name
+
+
+def build_system_instruction():
+    """
+    Build the system instruction from the current date/time and stored
+    memory. Call this per request, not once at startup: a long-running
+    server would otherwise resolve "tomorrow" against the day it started,
+    and wouldn't see facts saved through remember_fact.
+
+    Returns:
+        str: The system instruction for the model.
+    """
     # Get the current date and time
     today_str = datetime.now().astimezone().isoformat()
 
@@ -492,7 +505,7 @@ def build_agent_context(service):
     memory_str = "\n".join(f"- {k}: {v}" for k, v in memory.items()) or "No stored preferences yet."
 
     # System instruction for the model, including the current date/time and user's timezone
-    system_instruction = (
+    return (
         f"The current date and time is {today_str}. The user's timezone is {local_tz}. "
         "You are a calendar assistant. Only use your tools to manage the user's Google "
         "Calendar. If the user asks something unrelated to their calendar, politely "
@@ -505,15 +518,13 @@ def build_agent_context(service):
         "Take these into account when interpreting requests."
     )
 
-    return tool_functions, tools_by_name, system_instruction
-
 
 def main():
     client = genai.Client()
     service = get_calendar_service()
 
-    tool_functions, tools_by_name, system_instruction = build_agent_context(service)
-    run_agent(client, system_instruction, tool_functions, tools_by_name,
+    tool_functions, tools_by_name = build_agent_context(service)
+    run_agent(client, build_system_instruction(), tool_functions, tools_by_name,
               "Schedule a test event tomorrow at 3pm for 30 minutes")
 
 

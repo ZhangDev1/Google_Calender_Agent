@@ -42,6 +42,14 @@ def test_chat_sets_pending_and_returns_readable_prompt(api):
     assert api.sessions["s"]["pending"] == {"tool_name": "delete_event_tool", "args": {"event_id": "e1"}}
 
 
+def test_system_instruction_is_rebuilt_for_each_message(api):
+    with patch("api.build_system_instruction", side_effect=["day one", "day two"]),          patch("api.run_turn", return_value={"status": "done", "text": "ok"}) as run_turn:
+        client = TestClient(api.app)
+        client.post("/chat", json={"session_id": "s", "message": "first"})
+        client.post("/chat", json={"session_id": "s", "message": "second"})
+    assert [call.args[1] for call in run_turn.call_args_list] == ["day one", "day two"]
+
+
 def test_failed_turn_rolls_back_session(api):
     with patch("api.run_turn", side_effect=RefreshError("expired")):
         res = TestClient(api.app).post("/chat", json={"session_id": "s", "message": "hi"})

@@ -9,7 +9,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.auth.exceptions import RefreshError
 
-from agent import get_calendar_service, build_agent_context, run_turn, resolve_confirmation, transcribe_audio
+from agent import get_calendar_service, build_agent_context, build_system_instruction, run_turn, resolve_confirmation, transcribe_audio
 
 load_dotenv(Path(__file__).parent / ".env") # Load environment variables from .env file
 
@@ -29,7 +29,7 @@ app.add_middleware(
 
 client = genai.Client()
 service = get_calendar_service()
-tool_functions, tools_by_name, system_instruction = build_agent_context(service)
+tool_functions, tools_by_name = build_agent_context(service)
 
 # session_id -> {"history": [...], "pending": None or {"tool_name": str, "args": dict}}
 # in-memory, one process only — same "don't solve it before you need it" call
@@ -94,6 +94,7 @@ def _handle_message(session: dict, message: str) -> str:
     """
     history_len = len(session["history"])
     pending = session["pending"]
+    system_instruction = build_system_instruction()
     try:
         if pending is not None:
             session["pending"] = None

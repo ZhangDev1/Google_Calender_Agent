@@ -328,6 +328,10 @@ the next layer of complexity.
   removes the 7-day expiry. Real per-user mobile sign-in (and anything
   that works on Cloud Run, where `run_local_server` can't open a browser) is
   deferred to Phase 5.
+- The system instruction was built once at server startup, so on a server
+  left running overnight "tomorrow" resolved against the wrong day, and
+  facts saved with `remember_fact` weren't seen until a restart. Fixed by
+  moving it into `build_system_instruction()`, called for every message.
 
 ## Guardrails
 
